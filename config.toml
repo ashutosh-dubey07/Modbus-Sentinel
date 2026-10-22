@@ -1,0 +1,5 @@
+[app]
+name = "Modbus Sentinel"
+mode = "simulation"
+database_path = "data/modbus_sentinel.sqlite3"
+log_level = "INFO"
