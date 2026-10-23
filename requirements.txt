@@ -1,4 +1,1 @@
-pandas==3.0.6
-plotly==7.1.0
-pymodbus==3.16.1
-streamlit==1.66.0
+# The current prototype uses only the Python standard library at runtime.
