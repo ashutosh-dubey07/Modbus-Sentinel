@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Modbus Sentinel</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: #222;
+      background: #f4f4f4;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; }
+    header { background: #fff; border-bottom: 1px solid #c9c9c9; }
+    .header-inner, main { width: min(1040px, calc(100% - 32px)); margin: 0 auto; }
+    .header-inner { min-height: 70px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    h1 { margin: 0; font-size: 20px; font-weight: 650; }
+    .subtitle, .muted { color: #666; }
+    .subtitle { margin: 4px 0 0; font-size: 13px; }
+    main { padding: 24px 0 40px; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 14px; }
+    h2 { margin: 0; font-size: 21px; font-weight: 620; }
+    h3 { margin: 0; font-size: 16px; font-weight: 620; }
+    .panel { margin: 0 0 18px; border: 1px solid #ccc; background: #fff; }
+    .panel-title { padding: 13px 15px; border-bottom: 1px solid #ccc; }
+    .panel-body { padding: 15px; }
+    .metrics { display: grid; grid-template-columns: repeat(6, minmax(100px, 1fr)); border: 1px solid #ccc; background: #fff; margin-bottom: 18px; }
+    .metric { padding: 13px 15px; border-right: 1px solid #ddd; }
+    .metric:last-child { border-right: 0; }
+    .metric-label { display: block; color: #666; font-size: 13px; }
+    .metric-value { display: block; margin-top: 6px; font-size: 20px; font-weight: 600; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid #ddd; vertical-align: top; }
+    th { color: #555; font-size: 13px; font-weight: 600; }
+    tr:last-child td { border-bottom: 0; }
+    button, .button-link { border: 1px solid #888; border-radius: 2px; background: #fff; color: #222; padding: 8px 12px; font: inherit; font-size: 14px; text-decoration: none; cursor: pointer; }
+    button:hover, .button-link:hover { background: #eee; }
+    button:focus-visible, .button-link:focus-visible { outline: 2px solid #555; outline-offset: 2px; }
+    .status { padding: 12px 15px; background: #fff; border: 1px solid #ccc; margin-bottom: 18px; }
+    .empty { color: #666; margin: 0; }
+    .error { color: #222; border-left: 4px solid #555; }
+    .small { font-size: 13px; }
+    @media (max-width: 760px) {
+      .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      .metric:nth-child(2n) { border-right: 0; }
+      .metric:nth-child(n+3) { border-top: 1px solid #ddd; }
+      .header-inner { align-items: flex-start; padding: 13px 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div>
+        <h1>Modbus Sentinel</h1>
+        <p class="subtitle">Local simulation monitor</p>
+      </div>
+      <a class="button-link" href="/reports/events.csv">Download event report</a>
+    </div>
+  </header>
+  <main>
+    <div class="section-head">
+      <h2>Project status</h2>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+    <p id="message" class="status" role="status">Loading local records.</p>
+    <section id="metrics" class="metrics" aria-label="Record counts"></section>
+    <section class="panel">
+      <div class="panel-title"><h3>Network model</h3></div>
+      <div id="network" class="panel-body table-wrap"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h3>Recent findings</h3></div>
+      <div id="findings" class="panel-body table-wrap"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h3>Incidents</h3></div>
+      <div id="incidents" class="panel-body table-wrap"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h3>Recovery actions</h3></div>
+      <div id="recovery" class="panel-body table-wrap"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h3>Detection evaluation</h3></div>
+      <div id="evaluation" class="panel-body"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h3>Audit log</h3></div>
+      <div id="audit" class="panel-body"></div>
+    </section>
+    <p class="muted small">All records shown here are stored in the local simulation database.</p>
+  </main>
+  <script>
+    const message = document.querySelector("#message");
+    const refreshButton = document.querySelector("#refresh");
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[character]);
+    }
+
+    function table(headers, rows) {
+      if (!rows.length) return '<p class="empty">No records.</p>';
+      return `<table><thead><tr>${headers.map((item) => `<th>${escapeHtml(item)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    }
+
+    function render(data) {
+      const labels = [
+        ["Segments", data.counts.segments], ["Assets", data.counts.assets],
+        ["Events", data.counts.events], ["Findings", data.counts.findings],
+        ["Open incidents", data.counts.open_incidents], ["Isolated assets", data.counts.isolated_assets],
+        ["Recovery requests", data.counts.recovery_requests]
+      ];
+      document.querySelector("#metrics").innerHTML = labels.map(([label, value]) =>
+        `<div class="metric"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(value)}</span></div>`
+      ).join("");
+
+      const networkRows = data.segments.flatMap((segment) => segment.assets.map((asset) => [
+        segment.name, segment.zone, asset.name, asset.asset_type, asset.criticality, asset.state
+      ]));
+      document.querySelector("#network").innerHTML = table(
+        ["Segment", "Zone", "Asset", "Type", "Criticality", "Simulated state"], networkRows
+      );
+      document.querySelector("#findings").innerHTML = table(
+        ["Time", "Severity", "Finding", "Source", "Destination"],
+        data.findings.map((item) => [item.created_at, item.severity, item.title, item.source_ref, item.destination_ref])
+      );
+      document.querySelector("#incidents").innerHTML = table(
+        ["Time", "Status", "Severity", "Finding", "Source", "Destination"],
+        data.incidents.map((item) => [item.created_at, item.status, item.severity, item.title, item.source_ref, item.destination_ref])
+      );
+      document.querySelector("#recovery").innerHTML = table(
+        ["Requested", "Asset", "Status", "Executed"],
+        data.recovery_actions.map((item) => [item.requested_at, item.asset_name, item.status, item.executed_at || "not executed"])
+      );
+
+      const evaluation = data.evaluation;
+      if (!evaluation) {
+        document.querySelector("#evaluation").innerHTML = '<p class="empty">No evaluation has been run. Use <code>python -m modbus_sentinel --config config.toml --evaluate</code>.</p>';
+      } else {
+        const precision = evaluation.precision === null ? "not available" : `${Math.round(evaluation.precision * 100)}%`;
+        const recall = evaluation.recall === null ? "not available" : `${Math.round(evaluation.recall * 100)}%`;
+        const cases = table(
+          ["Scenario", "Expected rules", "Observed rules", "Missed", "Unexpected"],
+          evaluation.cases.map((item) => [item.scenario, item.expected.join(", ") || "none", item.observed.join(", ") || "none", item.missed.join(", ") || "none", item.unexpected.join(", ") || "none"])
+        );
+        document.querySelector("#evaluation").innerHTML = `<p>Precision: ${escapeHtml(precision)}. Recall: ${escapeHtml(recall)}.</p><p>Matched: ${escapeHtml(evaluation.true_positive_count)}. Unexpected: ${escapeHtml(evaluation.false_positive_count)}. Missed: ${escapeHtml(evaluation.missed_detection_count)}.</p>${cases}<p class="muted small">Rules not covered: ${escapeHtml(evaluation.unevaluated_rules.join(", ") || "none")}</p>`;
+      }
+
+      const audit = data.audit;
+      document.querySelector("#audit").textContent = audit.valid
+        ? `Hash chain intact. ${audit.entries_checked} entries checked.`
+        : `Hash chain check failed. ${audit.reason}`;
+      message.textContent = `Updated ${data.generated_at}. The dashboard only reads local simulation data.`;
+      message.classList.remove("error");
+    }
+
+    async function refresh() {
+      refreshButton.disabled = true;
+      message.textContent = "Loading local records.";
+      try {
+        const response = await fetch("/api/overview", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not read the local database.");
+        render(data);
+      } catch (error) {
+        message.textContent = error.message || "Could not read the local database.";
+        message.classList.add("error");
+      } finally {
+        refreshButton.disabled = false;
+      }
+    }
+
+    refreshButton.addEventListener("click", refresh);
+    refresh();
+  </script>
+</body>
+</html>
